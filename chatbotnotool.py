@@ -9,6 +9,8 @@ from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
+import gradio as gr
+
 # Load settings from YAML file
 def load_settings(preset):
     with open("chatbotsettings.yaml", "r") as file:
@@ -130,26 +132,95 @@ def run_cli_chatbot(model):
         events = stream_graph_updates(user_input, graph, config)
         stream_response(events)
 
+def run_gradio_no_mem_no_stream(model):
+    graph_builder = build_graph(model)
+    graph = graph_builder.compile()
+    def gradio_completion(message, history):
+        events = stream_graph_updates_no_mem_no_stream(message, graph)
+        for event in events:
+            for value in event.values():
+                return value["messages"][-1].content
+    gr.ChatInterface(
+        fn=gradio_completion, 
+        type="messages",
+    ).launch()
+
+def run_gradio_no_stream(model):
+    graph_builder = build_graph(model)
+    graph = graph_builder.compile()
+    def gradio_completion(message, history):
+        messages = [{"role": msg["role"], "content": msg["content"]} for msg in history] + [{"role": "user", "content": message}]
+        events = graph.stream({"messages": messages})
+        for event in events:
+            for value in event.values():
+                return value["messages"][-1].content
+    gr.ChatInterface(
+        fn=gradio_completion, 
+        type="messages",
+    ).launch()
+
+def run_gradio_no_mem(model):
+    graph_builder = build_graph(model)
+    graph = graph_builder.compile()
+    def gradio_completion(message, history):
+        events = stream_graph_updates_no_mem(message, graph)
+        output_message = ""
+        for message_chunk, metadata in events:
+            if message_chunk.content:
+                output_message += message_chunk.content
+                yield output_message
+    gr.ChatInterface(
+        fn=gradio_completion, 
+        type="messages",
+    ).launch()
+
+def run_gradio(model):
+    graph_builder = build_graph(model)
+    graph = graph_builder.compile()
+    def gradio_completion(message, history):
+        messages = [{"role": msg["role"], "content": msg["content"]} for msg in history] + [{"role": "user", "content": message}]
+        events = graph.stream({"messages": messages}, stream_mode="messages")
+        output_message = ""
+        for message_chunk, metadata in events:
+            if message_chunk.content:
+                output_message += message_chunk.content
+                yield output_message
+    gr.ChatInterface(
+        fn=gradio_completion, 
+        type="messages",
+    ).launch()
+
 # Main function to run chatbot
 def main(preset: str = "llama3", test: bool = False, cli: bool = False, nostream: bool = False, nomemory: bool = False):
     """
-    Run the chatbot with a specified preset.
+    Usage Examples:
 
-    Examples:
-    1. Run with default preset (llama3):
-       python chatbotnotool.py --test
-    
-    2. Run with a specific preset:
-       python chatbotnotool.py qwen --test
-    
-    3. Run the chatbot in CLI mode:
-       python chatbotnotool.py --cli
-    
-    4. Run chatbot in CLI mode without streaming:
-       python chatbotnotool.py --cli --nostream
-    
-    5. Run chatbot in CLI mode without memory:
-       python chatbotnotool.py --cli --nomemory
+    # Basic Test Mode (checks if the model is working)
+    python chatbotnotool.py --test
+
+    # Run CLI Mode (command-line interface)
+    python chatbotnotool.py --cli
+
+    # Run CLI Mode with a preset
+    python chatbotnotool.py qwen --cli
+
+    # Run CLI Mode without Streaming and Memory (both disabled)
+    python chatbotnotool.py --cli --nostream --nomemory
+
+    # Run in Gradio Mode (web interface)
+    python chatbotnotool.py
+
+    # Run in Gradio Mode with a preset
+    python chatbotnotool.py qwen
+
+    # Run Gradio Mode without Streaming
+    python chatbotnotool.py --nostream
+
+    # Run Gradio Mode without Memory (disables memory but keeps streaming)
+    python chatbotnotool.py --nomemory
+
+    # Run Gradio Mode without Streaming and Memory (both disabled)
+    python chatbotnotool.py --nostream --nomemory
     """
     if test:
         settings = load_settings(preset)
@@ -170,7 +241,18 @@ def main(preset: str = "llama3", test: bool = False, cli: bool = False, nostream
             else:
                 run_cli_chatbot(model)
     else:
-        pass  # Default behavior not implemented yet
+        settings = load_settings(preset)
+        model = get_model(settings)
+        if nostream:
+            if nomemory:
+                run_gradio_no_mem_no_stream(model)
+            else:
+                run_gradio_no_stream(model)
+        else:
+            if nomemory:
+                run_gradio_no_mem(model)
+            else:
+                run_gradio(model)
 
 if __name__ == "__main__":
     fire.Fire(main)
