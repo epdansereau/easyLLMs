@@ -1,0 +1,11 @@
+# Ignore text files
+*.txt
+
+# Ignore log files
+*.log
+
+# Ignore JSON files
+*.json
+
+# Ignore YAML files
+*.yaml
