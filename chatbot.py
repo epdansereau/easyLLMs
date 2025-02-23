@@ -1,107 +1,13 @@
 import fire
-
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
-from langgraph.checkpoint.memory import MemorySaver
 
 import gradio as gr
 from tools import multiply, add, current_time, random_number
 
-from langgraph.prebuilt import create_react_agent
-
+from agents import create_custom_agent_1
 from models import get_model, load_settings
-
-def stream_response_cli(events):
-    """
-    Streams assistant text as it arrives and prints tool calls/results in a cleaned-up format.
-
-    - Streams normal assistant text chunk-by-chunk (flushes immediately).
-    - Accumulates partial tool-call JSON for each call_id. As soon as we detect the call is done,
-      we print the final "[TOOL_CALL (id=...): (...)]" line.
-    - Prints "[TOOL_RESULT (id=...): ...]" immediately upon receiving tool result chunks.
-    """
-
-    # Track the current tool call being assembled
-    current_tool_id = None
-    partial_call_args = ""
-
-    def finalize_tool_call():
-        """
-        Prints the accumulated tool-call JSON for current_tool_id, if any,
-        and resets the accumulation buffers.
-        """
-        nonlocal current_tool_id, partial_call_args
-        if current_tool_id is not None:
-            # Print the fully accumulated tool call line
-            print(f"[TOOL_CALL (id={current_tool_id}): ({partial_call_args})]", flush=True)
-            # Reset
-            current_tool_id = None
-            partial_call_args = ""
-
-    for message_chunk, metadata in events:
-        # Check if this is a tool-result message (often identified by `name` and `tool_call_id`)
-        if getattr(message_chunk, "name", None) and hasattr(message_chunk, "tool_call_id"):
-            # Before printing tool result, finalize any in-progress tool call
-            finalize_tool_call()
-
-            # Print the tool's result immediately
-            tool_call_id = message_chunk.tool_call_id
-            tool_output = message_chunk.content
-            print(f"[TOOL_RESULT (id={tool_call_id}): {tool_output}]", flush=True)
-
-        else:
-            # Handle any partial tool-call arguments
-            calls = message_chunk.additional_kwargs.get("tool_calls", [])
-            for c in calls:
-                if c.get("type") == "function":
-                    call_id = c.get("id")
-                    # The chunk might have only a piece of JSON, e.g., '{"a' or ': 999'
-                    args_piece = c.get("function", {}).get("arguments", "")
-
-                    # If we see a new, non-None call ID, finalize the old one
-                    # and start accumulating the new call's arguments
-                    if call_id is not None and call_id != current_tool_id:
-                        finalize_tool_call()
-                        current_tool_id = call_id
-                        partial_call_args = args_piece
-                    else:
-                        # Same call ID or None -> keep appending to the last known call
-                        partial_call_args += args_piece
-
-            # If there's normal text in this chunk, print it immediately (streamed)
-            if message_chunk.content:
-                print(message_chunk.content, end="", flush=True)
-
-    # After all chunks, finalize any leftover tool-call
-    finalize_tool_call()
-
-    # Optionally print a final newline
-    print()
     
 def stream_response(events):
-    """
-    Streams assistant text as it arrives but instead of printing,
-    accumulates all output into a list. For normal text, each
-    consecutive run is appended into a single "normal_text" element.
-
-    For example, if there's never a tool call or tool result, the final
-    list would contain exactly one element, like:
-    [
-      {
-        "type": "normal_text",
-        "content": "All the text that streamed so far..."
-      }
-    ]
-
-    result_list will look like:
-    [
-      {"type": "normal_text", "content": "some text..."},
-      {"type": "tool_call", "tool_call_id": 123, "name": "my_function", "content": "JSON snippet..."},
-      {"type": "tool_result", "tool_call_id": 123, "content": "...output..."},
-      {"type": "normal_text", "content": "some more text..."},
-      ...
-    ]
-    """
-
     # This list holds all items so far
     result_list = []
 
@@ -306,27 +212,9 @@ def gradio_history_to_langchain_history(gradio_history):
 
     return lc_messages
 
-def run_cli_chatbot(model):
-    memory = MemorySaver()
-    config = {"configurable": {"thread_id": "1"}}
-    tools = [multiply, add, current_time, random_number]
-    agent_executor = create_react_agent(model, tools, checkpointer=memory)
-
-    while True:
-        user_input = input("User: ")
-        if user_input.lower() in ["quit", "exit", "q"]:
-            print("Goodbye!")
-            break
-        events = agent_executor.stream(
-            {"messages": [HumanMessage(content=user_input)]},
-            config,
-            stream_mode="messages",
-        )
-        stream_response_cli(events)
-
 def run_gradio(model):
     tools = [multiply, add, current_time, random_number]
-    agent_executor = create_react_agent(model, tools)
+    agent_executor = create_custom_agent_1(model, tools)
     def gradio_completion(message, history):
         events = agent_executor.stream(
             {"messages": gradio_history_to_langchain_history(history) + [HumanMessage(content=message)]},
@@ -339,13 +227,10 @@ def run_gradio(model):
         type="messages",
     ).launch()
 
-def main(preset: str = "llama3", cli: bool = False):
+def main(preset: str = "qwen"):
     settings = load_settings(preset)
     model = get_model(settings)
-    if cli:
-        run_cli_chatbot(model)
-    else:
-        run_gradio(model)
+    run_gradio(model)
 
 if __name__ == "__main__":
     fire.Fire(main)

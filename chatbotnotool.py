@@ -1,4 +1,3 @@
-import yaml
 import fire
 from langchain_community.chat_models import ChatLiteLLM
 from langchain_core.messages import HumanMessage
@@ -11,31 +10,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 import gradio as gr
 
-# Load settings from YAML file
-def load_settings(preset):
-    with open("chatbotsettings.yaml", "r") as file:
-        presets = yaml.safe_load(file)
-    if preset not in presets:
-        raise ValueError(f"Preset '{preset}' not found in settings.yaml. Available presets: {list(presets.keys())}")
-    return presets[preset]
-
-# Load API keys from apikeys.yaml
-def load_api_key(provider):
-    with open("apikeys.yaml", "r") as file:
-        api_keys = yaml.safe_load(file)
-    if provider not in api_keys:
-        raise ValueError(f"API key for provider '{provider}' not found in apikeys.yaml.")
-    return api_keys[provider]
-
-# Get the model instance
-def get_model(settings):
-    api_key = load_api_key(settings["custom_llm_provider"])
-    return ChatLiteLLM(
-        model=settings["model"], 
-        custom_llm_provider=settings["custom_llm_provider"], 
-        api_base=settings.get("api_base"), 
-        api_key=api_key
-    )
+from models import get_model, load_settings
 
 class State(TypedDict):
     messages: Annotated[list, add_messages]
