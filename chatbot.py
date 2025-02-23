@@ -215,17 +215,32 @@ def gradio_history_to_langchain_history(gradio_history):
 def run_gradio(model):
     tools = [multiply, add, current_time, random_number]
     agent_executor = create_custom_agent_1(model, tools)
-    def gradio_completion(message, history):
+    def gradio_completion(history):
         events = agent_executor.stream(
-            {"messages": gradio_history_to_langchain_history(history) + [HumanMessage(content=message)]},
+            {"messages": history},
             stream_mode="messages",
         )
         for output in stream_response(events):
             yield transform_for_gradio(output)
-    gr.ChatInterface(
-        fn=gradio_completion, 
-        type="messages",
-    ).launch()
+
+    with gr.Blocks() as app:
+        chatbot = gr.Chatbot(type="messages",editable='all')
+        msg = gr.Textbox()
+        clear = gr.Button("Clear")
+
+        def user(user_message, history: list):
+            return "", history + [{"role": "user", "content": user_message}]
+
+        def bot(history: list):
+            for chunk in gradio_completion(gradio_history_to_langchain_history(history)):
+                yield history + chunk
+
+        msg.submit(user, [msg, chatbot], [msg, chatbot], queue=False).then(
+            bot, chatbot, chatbot
+        )
+        clear.click(lambda: None, None, chatbot, queue=False)
+
+    app.launch()
 
 def main(preset: str = "qwen"):
     settings = load_settings(preset)
