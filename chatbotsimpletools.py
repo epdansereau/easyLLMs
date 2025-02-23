@@ -1,13 +1,11 @@
 import fire
-from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 
 import gradio as gr
 from tools import multiply, add, current_time, random_number
 
 from agents import create_custom_agent_1
-from models import get_model, load_settings, load_api_key
-
-from langchain_community.tools import BraveSearch
+from models import get_model, load_settings
     
 def stream_response(events):
     # This list holds all items so far
@@ -34,6 +32,7 @@ def stream_response(events):
             current_tool_id = None
             partial_call_args = ""
             partial_call_name = None
+
     for message_chunk, metadata in events:
         # Check if this is a tool-result message
         if getattr(message_chunk, "name", None) and hasattr(message_chunk, "tool_call_id"):
@@ -98,103 +97,20 @@ def stream_response(events):
 
 
 def transform_for_gradio(messages_list):
-    """
-    For each item in messages_list, produce one or more gr.ChatMessage objects.
-
-    - "tool_call" --> a ChatMessage with metadata={"title": "...Using tool...", "id": ...}
-    - "tool_result" --> a ChatMessage with metadata={"title": "Tool result:", "parent_id": ...}
-    - "normal_text" --> possibly split into multiple ChatMessages:
-        * plain text (everything outside <think></think> tags)
-        * "thinking" text (everything inside <think></think>)
-          which becomes ChatMessage with metadata={"title": "Thinking..."}
-        If <think> is missing a closing </think>, we consider the remainder
-        of the string after <think> to be a "thinking" segment.
-    - Any other "type" --> treat as normal text.
-    """
-
-    def parse_thinking_segments(text):
-        """
-        Given a string that may contain <think>...</think> segments,
-        return a list of tuples (content, is_thinking), where:
-          - content is the substring
-          - is_thinking is a boolean indicating whether the substring
-            is inside <think>...</think> or not.
-
-        If <think> is unclosed, treat everything from <think> onward
-        as one thinking segment.
-        """
-        segments = []
-        pointer = 0
-        length = len(text)
-
-        while pointer < length:
-            # Find the next <think> tag
-            start_idx = text.find("<think>", pointer)
-            if start_idx == -1:
-                # No more <think> tags; everything left is normal text
-                normal_part = text[pointer:]
-                if normal_part:
-                    segments.append((normal_part, False))
-                break
-
-            # Everything up to <think> is normal text
-            if start_idx > pointer:
-                normal_part = text[pointer:start_idx]
-                segments.append((normal_part, False))
-
-            # Now find the corresponding </think> (if any)
-            close_tag = "</think>"
-            end_idx = text.find(close_tag, start_idx + len("<think>"))
-            if end_idx == -1:
-                # No closing </think>, so everything from <think> to the end
-                # is considered "thinking"
-                thinking_part = text[start_idx + len("<think>"):]
-                segments.append((thinking_part, True))
-                # We're done parsing this string
-                break
-            else:
-                # We found a matching </think>
-                thinking_part = text[start_idx + len("<think>"): end_idx]
-                segments.append((thinking_part, True))
-                # Move pointer past the </think>
-                pointer = end_idx + len(close_tag)
-                continue
-
-            # If we didn't break, update pointer
-            pointer = end_idx + len(close_tag)
-
-        return segments
 
     gradio_messages = []
 
     for item in messages_list:
         msg_type = item.get("type")
 
+        # Normal text => just put all text into the content
         if msg_type == "normal_text":
-            original_content = item.get("content", "")
-            # Parse out <think> segments
-            parsed_segments = parse_thinking_segments(original_content)
-            # For each segment, create an appropriate ChatMessage
-            for seg_content, is_thinking in parsed_segments:
-                seg_content_stripped = seg_content  # or seg_content.strip(), if desired
-
-                if is_thinking:
-                    # Create a "Thinking..." segment
-                    gradio_messages.append(
-                        gr.ChatMessage(
-                            role="assistant",
-                            content=seg_content_stripped,
-                            metadata={"title": "Thinking..."}
-                        )
-                    )
-                else:
-                    # Normal text
-                    gradio_messages.append(
-                        gr.ChatMessage(
-                            role="assistant",
-                            content=seg_content_stripped
-                        )
-                    )
+            gradio_messages.append(
+                gr.ChatMessage(
+                    role="assistant",
+                    content=item.get("content", "")
+                )
+            )
 
         elif msg_type == "tool_call":
             # Use the tool name in the metadata's title
@@ -210,7 +126,7 @@ def transform_for_gradio(messages_list):
             )
 
         elif msg_type == "tool_result":
-            # Just store the content as-is
+            # Parse content as integer if possible
             content_val = item.get("content", "")
             gradio_messages.append(
                 gr.ChatMessage(
@@ -224,7 +140,9 @@ def transform_for_gradio(messages_list):
             )
 
         else:
-            # If there's some other type not handled, treat it as normal text
+            # If there's some other type you haven't handled explicitly,
+            # decide what to do (ignore, or treat as normal text, etc.)
+            # For safety, let's just treat it as normal text:
             gradio_messages.append(
                 gr.ChatMessage(role="assistant", content=item.get("content", ""))
             )
@@ -295,13 +213,9 @@ def gradio_history_to_langchain_history(gradio_history):
     return lc_messages
 
 def run_gradio(model):
-    search = BraveSearch.from_api_key(api_key=load_api_key("brave"), search_kwargs={"count": 3})
-    tools = [search, current_time]
-    default_system = '''You are an helpful AI agent. Use the tools at your disposal to assist the user in their queries as needed. Some replies don't require any tools, only conversation. Some replies require more than one tool. Some require you to use a tool and wait for the result before continuing your answer.'''
-    agent_executor = create_custom_agent_1(model, tools, prompt=default_system)
-
+    tools = [multiply, add, current_time, random_number]
+    agent_executor = create_custom_agent_1(model, tools)
     def gradio_completion(history):
-        print("History:", history)
         events = agent_executor.stream(
             {"messages": history},
             stream_mode="messages",
@@ -318,7 +232,6 @@ def run_gradio(model):
             return "", history + [{"role": "user", "content": user_message}]
 
         def bot(history: list):
-            print("History:", history)
             for chunk in gradio_completion(gradio_history_to_langchain_history(history)):
                 yield history + chunk
 

@@ -187,3 +187,4 @@ cython_debug/
 
 junk.py
 test.py
+logs/
