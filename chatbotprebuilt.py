@@ -1,7 +1,8 @@
 import yaml
 import fire
 from langchain_community.chat_models import ChatLiteLLM
-from langchain_core.messages import HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 
 from typing import Annotated
 from typing_extensions import TypedDict
@@ -10,7 +11,6 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
 import gradio as gr
-import re
 from tools import multiply, add, current_time, random_number
 
 from langgraph.prebuilt import create_react_agent
@@ -34,6 +34,12 @@ def load_api_key(provider):
 # Get the model instance
 def get_model(settings):
     api_key = load_api_key(settings["custom_llm_provider"])
+    if settings["custom_llm_provider"] == "gemini":
+        '''current implementation will return tool results but not tool calls.'''
+        return ChatGoogleGenerativeAI(
+            model=settings["model"], 
+            api_key=api_key
+        )
     return ChatLiteLLM(
         model=settings["model"], 
         custom_llm_provider=settings["custom_llm_provider"], 
@@ -301,6 +307,69 @@ def transform_for_gradio(messages_list):
 
     return gradio_messages
 
+
+def gradio_history_to_langchain_history(gradio_history):
+    lc_messages = []
+
+    for entry in gradio_history:
+        role = entry.get("role")
+        content = entry.get("content", "")
+        metadata = entry.get("metadata") or {}
+
+        # --- If it's from the user, create a HumanMessage
+        if role == "user":
+            lc_messages.append(
+                HumanMessage(content=content)
+            )
+            continue
+
+        # Otherwise it's from the assistant
+        title = metadata.get("title", "")
+        if title.startswith("Using tool "):
+            # This implies a "tool call"
+            # Example: {"title": "Using tool multiply", "id": "101665233"}
+            function_name = title[len("Using tool "):]
+            tool_id = metadata.get("id", "")
+            arguments = content  # Usually a JSON string
+
+            # Create an AIMessage with a "tool_calls" entry
+            lc_messages.append(
+                AIMessage(
+                    content="",  # tool calls often have empty "final" content
+                    additional_kwargs={
+                        "tool_calls": [
+                            {
+                                "id": tool_id,
+                                "type": "function",
+                                "function": {
+                                    "name": function_name,
+                                    "arguments": arguments
+                                }
+                            }
+                        ]
+                    }
+                )
+            )
+
+        elif title == "Tool result:":
+            # This implies the result of a tool call
+            # Example: {"title": "Tool result:", "parent_id": "101665233"}
+            parent_id = metadata.get("parent_id", "")
+            lc_messages.append(
+                ToolMessage(
+                    content=content,
+                    tool_call_id=parent_id
+                )
+            )
+
+        else:
+            # Otherwise, it's a plain assistant message
+            lc_messages.append(
+                AIMessage(content=content)
+            )
+
+    return lc_messages
+
 def run_cli_chatbot(model):
     memory = MemorySaver()
     config = {"configurable": {"thread_id": "1"}}
@@ -324,7 +393,7 @@ def run_gradio(model):
     agent_executor = create_react_agent(model, tools)
     def gradio_completion(message, history):
         events = agent_executor.stream(
-            {"messages": [HumanMessage(content=message)]},
+            {"messages": gradio_history_to_langchain_history(history) + [HumanMessage(content=message)]},
             stream_mode="messages",
         )
         for output in stream_response(events):
