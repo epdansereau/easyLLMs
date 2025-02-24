@@ -35,5 +35,20 @@ class ChunkDebugger:
         if self.file_handle:
             self.file_handle.close()
 
+class Timer:
+    def __init__(self):
+        self.start = None
+        self.end = None
+    
+    def __call__(self, tag=None):
+        self.end = time.time()
+        if self.start:
+            if tag:
+                print(f"{tag}: {self.end - self.start}")
+            else:
+                print(f"Timer event: {self.end - self.start}")
+        self.start = time.time()
+
 # Create a global instance of ChunkDebugger
 chunkdebug = ChunkDebugger()
+timer = Timer()

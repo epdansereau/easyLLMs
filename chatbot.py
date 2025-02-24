@@ -1,5 +1,5 @@
 import fire
-from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, SystemMessage
 
 import gradio as gr
 from tools import multiply, add, current_time, random_number
@@ -8,6 +8,8 @@ from agents import create_custom_agent_1
 from models import get_model, load_settings, load_api_key
 
 from langchain_community.tools import BraveSearch
+
+from debug import timer
     
 def stream_response(events):
     # This list holds all items so far
@@ -297,11 +299,11 @@ def gradio_history_to_langchain_history(gradio_history):
 def run_gradio(model):
     search = BraveSearch.from_api_key(api_key=load_api_key("brave"), search_kwargs={"count": 3})
     tools = [search, current_time]
-    default_system = '''You are an helpful AI agent. Use the tools at your disposal to assist the user in their queries as needed. Some replies don't require any tools, only conversation. Some replies require more than one tool. Some require you to use a tool and wait for the result before continuing your answer.'''
-    agent_executor = create_custom_agent_1(model, tools, prompt=default_system)
+    agent_executor = create_custom_agent_1(model, tools)
 
-    def gradio_completion(history):
-        print("History:", history)
+    def gradio_completion(history, system):
+        if system:
+            history = [SystemMessage(content=system)] + history
         events = agent_executor.stream(
             {"messages": history},
             stream_mode="messages",
@@ -310,22 +312,25 @@ def run_gradio(model):
             yield transform_for_gradio(output)
 
     with gr.Blocks() as app:
-        chatbot = gr.Chatbot(type="messages",editable=True)
-        msg = gr.Textbox()
-        clear = gr.Button("Clear")
+        chatbot = gr.Chatbot(type="messages",editable=True, height="75vh")
+        msg = gr.Textbox(show_label=False, placeholder="Type a message...", container=False, submit_btn=True, stop_btn=True)
+        default_system = '''You are an helpful AI agent. Use the tools at your disposal to assist the user in their queries as needed. Some replies don't require any tools, only conversation. Some replies require more than one tool. Some require you to use a tool and wait for the result before continuing your answer.'''
+        with gr.Accordion("System prompt", open=False):
+            system = gr.Textbox(value=default_system, show_label=False, placeholder="Enter a system prompt or leave empty for no system prompt...", container=False)
 
         def user(user_message, history: list):
             return "", history + [{"role": "user", "content": user_message}]
 
-        def bot(history: list):
-            print("History:", history)
-            for chunk in gradio_completion(gradio_history_to_langchain_history(history)):
+        def bot(history, system):
+            for chunk in gradio_completion(gradio_history_to_langchain_history(history), system):
                 yield history + chunk
 
         msg.submit(user, [msg, chatbot], [msg, chatbot], queue=False).then(
-            bot, chatbot, chatbot
+            bot, [chatbot, system], chatbot
         )
-        clear.click(lambda: None, None, chatbot, queue=False)
+        
+        #clear = gr.Button("Clear")
+        #clear.click(lambda: None, None, chatbot, queue=False)
 
     app.launch()
 
