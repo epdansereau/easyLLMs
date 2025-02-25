@@ -2,7 +2,7 @@ import fire
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, SystemMessage
 
 import gradio as gr
-from gradio_chatbot_UI import launch_gradio_chatbot
+from gradio_chatbot_UI import ChatInterfaceCustom
 
 from tools import multiply, add, current_time, random_number
 
@@ -316,7 +316,8 @@ def main(preset: str = "qwen"):
         for output in stream_response(events):
             yield transform_for_gradio(output)
 
-    launch_gradio_chatbot(gradio_completion)
+    demo = ChatInterfaceCustom(gradio_completion)
+    demo.launch()
 
 if __name__ == "__main__":
     fire.Fire(main)

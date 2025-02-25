@@ -9,7 +9,7 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
 import gradio as gr
-from gradio_chatbot_UI import launch_gradio_chatbot
+from gradio_chatbot_UI import ChatInterfaceCustom
 
 from models import get_model, load_settings
 
@@ -138,7 +138,8 @@ def run_gradio_no_mem_no_stream(model):
                             role="assistant",
                             content=value["messages"][-1].content
                         )]]
-    launch_gradio_chatbot(gradio_completion)
+    demo = ChatInterfaceCustom(gradio_completion)
+    demo.launch()
 
 def run_gradio_no_stream(model):
     graph_builder = build_graph(model)
@@ -156,7 +157,8 @@ def run_gradio_no_stream(model):
                             role="assistant",
                             content=value["messages"][-1].content
                         )]]
-    launch_gradio_chatbot(gradio_completion)
+    demo = ChatInterfaceCustom(gradio_completion)
+    demo.launch()
 
 def run_gradio_no_mem(model):
     graph_builder = build_graph(model)
@@ -174,7 +176,8 @@ def run_gradio_no_mem(model):
                             role="assistant",
                             content=output_message
                         )]
-    launch_gradio_chatbot(gradio_completion)
+    demo = ChatInterfaceCustom(gradio_completion)
+    demo.launch()
 
 def run_gradio(model):
     graph_builder = build_graph(model)
@@ -194,7 +197,8 @@ def run_gradio(model):
                             role="assistant",
                             content=output_message
                         )]
-    launch_gradio_chatbot(gradio_completion)
+    demo = ChatInterfaceCustom(gradio_completion)
+    demo.launch()
 
 # Main function to run chatbot
 def main(preset: str = "qwen", test: bool = False, cli: bool = False, nostream: bool = False, nomemory: bool = False):
