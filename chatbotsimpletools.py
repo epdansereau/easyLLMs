@@ -1,7 +1,8 @@
 import fire
-from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, SystemMessage
 
 import gradio as gr
+from gradio_chatbot_UI import launch_gradio_chatbot
 from tools import multiply, add, current_time, random_number
 
 from agents import create_custom_agent_1
@@ -212,10 +213,15 @@ def gradio_history_to_langchain_history(gradio_history):
 
     return lc_messages
 
-def run_gradio(model):
+def main(preset: str = "qwen"):
+    settings = load_settings(preset)
+    model = get_model(settings)
     tools = [multiply, add, current_time, random_number]
     agent_executor = create_custom_agent_1(model, tools)
-    def gradio_completion(history):
+    def gradio_completion(history, system):
+        history = gradio_history_to_langchain_history(history)
+        if system:
+            history = [SystemMessage(content=system)] + history
         events = agent_executor.stream(
             {"messages": history},
             stream_mode="messages",
@@ -223,29 +229,7 @@ def run_gradio(model):
         for output in stream_response(events):
             yield transform_for_gradio(output)
 
-    with gr.Blocks() as app:
-        chatbot = gr.Chatbot(type="messages",editable=True)
-        msg = gr.Textbox()
-        clear = gr.Button("Clear")
-
-        def user(user_message, history: list):
-            return "", history + [{"role": "user", "content": user_message}]
-
-        def bot(history: list):
-            for chunk in gradio_completion(gradio_history_to_langchain_history(history)):
-                yield history + chunk
-
-        msg.submit(user, [msg, chatbot], [msg, chatbot], queue=False).then(
-            bot, chatbot, chatbot
-        )
-        clear.click(lambda: None, None, chatbot, queue=False)
-
-    app.launch()
-
-def main(preset: str = "qwen"):
-    settings = load_settings(preset)
-    model = get_model(settings)
-    run_gradio(model)
+    launch_gradio_chatbot(gradio_completion)
 
 if __name__ == "__main__":
     fire.Fire(main)

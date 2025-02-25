@@ -1,6 +1,6 @@
 import fire
 from langchain_community.chat_models import ChatLiteLLM
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from typing import Annotated
 from typing_extensions import TypedDict
@@ -9,6 +9,7 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
 import gradio as gr
+from gradio_chatbot_UI import launch_gradio_chatbot
 
 from models import get_model, load_settings
 
@@ -24,24 +25,40 @@ def build_graph(model):
     graph_builder.set_finish_point("chatbot")
     return graph_builder
 
-def stream_graph_updates_no_mem_no_stream(user_input: str, graph):
-    events = graph.stream({"messages": [{"role": "user", "content": user_input}]})
+def stream_graph_updates_no_mem_no_stream(user_input: str, graph, system=None):
+    if system:
+        history = [{"role": "system", "content": system}, {"role": "user", "content": user_input}]
+    else:
+        history = [{"role": "user", "content": user_input}]
+    events = graph.stream({"messages": history})
     return events
 
-def stream_graph_updates_no_stream(user_input: str, graph, config):
+def stream_graph_updates_no_stream(user_input: str, graph, config, system=None):
+    if system:
+        history = [{"role": "system", "content": system}, {"role": "user", "content": user_input}]
+    else:
+        history = [{"role": "user", "content": user_input}]
     events = graph.stream(
-        {"messages": [{"role": "user", "content": user_input}]},
+        {"messages": history},
         config,
     )
     return events
 
-def stream_graph_updates_no_mem(user_input: str, graph):
-    events = graph.stream({"messages": [{"role": "user", "content": user_input}]}, stream_mode="messages")
+def stream_graph_updates_no_mem(user_input: str, graph, system=None):
+    if system:
+        history = [{"role": "system", "content": system}, {"role": "user", "content": user_input}]
+    else:
+        history = [{"role": "user", "content": user_input}]
+    events = graph.stream({"messages": history}, stream_mode="messages")
     return events
 
-def stream_graph_updates(user_input: str, graph, config):
+def stream_graph_updates(user_input: str, graph, config, system=None):
+    if system:
+        history = [{"role": "system", "content": system}, {"role": "user", "content": user_input}]
+    else:
+        history = [{"role": "user", "content": user_input}]
     events = graph.stream(
-        {"messages": [{"role": "user", "content": user_input}]},
+        {"messages": history},
         config,
         stream_mode="messages"
     )
@@ -110,63 +127,77 @@ def run_cli_chatbot(model):
 def run_gradio_no_mem_no_stream(model):
     graph_builder = build_graph(model)
     graph = graph_builder.compile()
-    def gradio_completion(message, history):
-        events = stream_graph_updates_no_mem_no_stream(message, graph)
+    def gradio_completion(history, system):
+        if not history:
+            return []
+        msg = history[-1]["content"]
+        events = stream_graph_updates_no_mem_no_stream(msg, graph, system=system)
         for event in events:
             for value in event.values():
-                return value["messages"][-1].content
-    gr.ChatInterface(
-        fn=gradio_completion, 
-        type="messages",
-    ).launch()
+                return [[gr.ChatMessage(
+                            role="assistant",
+                            content=value["messages"][-1].content
+                        )]]
+    launch_gradio_chatbot(gradio_completion)
 
 def run_gradio_no_stream(model):
     graph_builder = build_graph(model)
     graph = graph_builder.compile()
-    def gradio_completion(message, history):
-        messages = [{"role": msg["role"], "content": msg["content"]} for msg in history] + [{"role": "user", "content": message}]
+    def gradio_completion(history, system):
+        if not history:
+            return []
+        messages = [{"role": msg["role"], "content": msg["content"]} for msg in history]
+        if system:
+            messages = [{"role": "system", "content": system}] + messages
         events = graph.stream({"messages": messages})
         for event in events:
             for value in event.values():
-                return value["messages"][-1].content
-    gr.ChatInterface(
-        fn=gradio_completion, 
-        type="messages",
-    ).launch()
+                return [[gr.ChatMessage(
+                            role="assistant",
+                            content=value["messages"][-1].content
+                        )]]
+    launch_gradio_chatbot(gradio_completion)
 
 def run_gradio_no_mem(model):
     graph_builder = build_graph(model)
     graph = graph_builder.compile()
-    def gradio_completion(message, history):
-        events = stream_graph_updates_no_mem(message, graph)
+    def gradio_completion(history, system):
+        if not history:
+            return []
+        msg = history[-1]["content"]
+        events = stream_graph_updates_no_mem(msg, graph, system=system)
         output_message = ""
         for message_chunk, metadata in events:
             if message_chunk.content:
                 output_message += message_chunk.content
-                yield output_message
-    gr.ChatInterface(
-        fn=gradio_completion, 
-        type="messages",
-    ).launch()
+                yield [gr.ChatMessage(
+                            role="assistant",
+                            content=output_message
+                        )]
+    launch_gradio_chatbot(gradio_completion)
 
 def run_gradio(model):
     graph_builder = build_graph(model)
     graph = graph_builder.compile()
-    def gradio_completion(message, history):
-        messages = [{"role": msg["role"], "content": msg["content"]} for msg in history] + [{"role": "user", "content": message}]
+    def gradio_completion(history, system):
+        if not history:
+            return []
+        messages = [{"role": msg["role"], "content": msg["content"]} for msg in history]
+        if system:
+            messages = [{"role": "system", "content": system}] + messages
         events = graph.stream({"messages": messages}, stream_mode="messages")
         output_message = ""
         for message_chunk, metadata in events:
             if message_chunk.content:
                 output_message += message_chunk.content
-                yield output_message
-    gr.ChatInterface(
-        fn=gradio_completion, 
-        type="messages",
-    ).launch()
+                yield [gr.ChatMessage(
+                            role="assistant",
+                            content=output_message
+                        )]
+    launch_gradio_chatbot(gradio_completion)
 
 # Main function to run chatbot
-def main(preset: str = "llama3", test: bool = False, cli: bool = False, nostream: bool = False, nomemory: bool = False):
+def main(preset: str = "qwen", test: bool = False, cli: bool = False, nostream: bool = False, nomemory: bool = False):
     """
     Usage Examples:
 
