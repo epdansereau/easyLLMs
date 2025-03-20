@@ -6,7 +6,17 @@ from gradio_chatbot_UI import ChatInterfaceCustom
 
 from tools import multiply, add, current_time, random_number
 
-from agents import create_custom_agent_1
+from pydantic import BaseModel, Field
+from typing_extensions import TypedDict, Literal, Annotated
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Command
+from langgraph.graph import add_messages
+from langgraph.prebuilt import create_react_agent
+
+class State(TypedDict):
+    email_input: dict
+    messages: Annotated[list, add_messages]
+
 from models import get_model, load_settings, load_api_key
 
 from langchain_community.tools import BraveSearch
@@ -303,7 +313,11 @@ def main(preset: str = "qwen"):
     model = get_model(settings)
     search = BraveSearch.from_api_key(api_key=load_api_key("brave"), search_kwargs={"count": 3})
     tools = [search, current_time]
-    agent_executor = create_custom_agent_1(model, tools)
+    agent_executor = create_react_agent(model, tools)
+    agent_graph = StateGraph(State)
+    agent_graph = agent_graph.add_node("main_agent", agent_executor)
+    agent_graph = agent_graph.add_edge(START, "main_agent")
+    agent_graph = agent_graph.compile()
 
     def gradio_completion(history, system):
         history = gradio_history_to_langchain_history(history)
