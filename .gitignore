@@ -188,3 +188,5 @@ cython_debug/
 junk.py
 test.py
 logs/
+generated_images/
+generated_videos/
