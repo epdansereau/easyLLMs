@@ -156,10 +156,9 @@ def transform_for_gradio(messages_list):
                 )
             )
 
-            if content_val.startswith("Image successfully generated and displayed (ID:"):
+            if content_val.startswith("Image successfully generated and displayed to the user."):
                 # Display the image
-                img_id = content_val.split("ID:")[1].strip()[:-2]
-                img_path = f"generated_images/{img_id}.png"
+                img_path = f"generated_images/image_{item.tool_call_id}.png"
                 gradio_messages.append(
                     gr.ChatMessage(
                         role="assistant",
@@ -170,10 +169,9 @@ def transform_for_gradio(messages_list):
                         }
                     )
                 )
-            if content_val.startswith("Video successfully generated and displayed (ID:"):
+            if content_val.startswith("Video successfully generated and displayed to the user."):
                 # Display the video
-                vid_id = content_val.split("ID:")[1].strip()[:-2]
-                vid_path = f"generated_videos/{vid_id}.mp4"
+                vid_path = f"generated_videos/video_{item.tool_call_id}.mp4"
                 gradio_messages.append(
                     gr.ChatMessage(
                         role="assistant",

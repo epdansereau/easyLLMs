@@ -16,6 +16,7 @@ import os
 from datetime import datetime
 
 from langchain_core.tools import tool, InjectedToolArg
+from langchain_core.runnables import RunnableConfig
 
 server_address = "127.0.0.1:8188"
 client_id = str(uuid.uuid4())
@@ -137,8 +138,25 @@ def test_video_generation():
                 cv2.destroyAllWindows()
                 exit(0)
 
+def get_last_tool_call_id(config):
+    partial_fn = config['configurable']['__pregel_send']
+    
+    # Get the PregelExecutableTask object
+    task = partial_fn.args[0]
+
+    # Access its .input attribute
+    input_dict = task.input
+
+    # Access messages
+    messages = input_dict['messages']
+
+    # Grab the last tool_call id
+    tool_call_id = messages[-1].tool_calls[0]['id']
+
+    return tool_call_id
+
 @tool
-def generate_image(prompt: str,) -> str:
+def generate_image(prompt: str, special_config_param: RunnableConfig) -> str:
     """
     Generate an image from a detailed prompt string.
 
@@ -148,6 +166,8 @@ def generate_image(prompt: str,) -> str:
     Returns:
         str: A confirmation message indicating the image was successfully generated and displayed.
     """
+    tool_call_id = get_last_tool_call_id(special_config_param)
+
     # Hard-coded workflow path for image generation
     workflow_path = "tools/Flux Schnell API.json"
     
@@ -161,14 +181,13 @@ def generate_image(prompt: str,) -> str:
     for node_id in images_dict:
         for idx, image_data in enumerate(images_dict[node_id]):
             image = Image.open(io.BytesIO(image_data))
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_path = f"generated_images/image_{node_id}_{idx}_{timestamp}.png"
+            file_path = f"generated_images/image_{tool_call_id}.png"
             image.save(file_path)
             # The file_path is now saved; server-side handling is assumed.
     
-    return f"Image successfully generated and displayed (ID:image_{node_id}_{idx}_{timestamp})."
+    return f"Image successfully generated and displayed to the user."
 
-def generate_video(prompt: str) -> str:
+def generate_video(prompt: str, special_config_param: RunnableConfig) -> str:
     """
     Generate a video 41 frames video from a detailed prompt string.
 
@@ -179,6 +198,8 @@ def generate_video(prompt: str) -> str:
         str: A confirmation message indicating the video was successfully generated and displayed.
     """
     # Hard-coded workflow path for video generation
+    tool_call_id = get_last_tool_call_id(special_config_param)
+
     workflow_path = "tools/hyvideo_t2v_example_01 API.json"
     
     # Generate video frames (assumed to be a dict mapping node IDs to lists of image bytes)
@@ -204,8 +225,7 @@ def generate_video(prompt: str) -> str:
     os.makedirs("generated_videos", exist_ok=True)
     
     # Define the video filename with a unique timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    video_filepath = f"generated_videos/video_{timestamp}.mp4"
+    video_filepath = f"generated_videos/video_{tool_call_id}.mp4"
     
     # Define video writer with a codec that is typically browser friendly.
     # 'avc1' is a fourcc for H.264, which is widely supported in browsers.
@@ -221,4 +241,4 @@ def generate_video(prompt: str) -> str:
     
     video_writer.release()
     
-    return f"Video successfully generated and displayed (ID:video_{timestamp})."
+    return f"Video successfully generated and displayed to the user."
