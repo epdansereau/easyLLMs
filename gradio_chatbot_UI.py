@@ -7,9 +7,9 @@ class ChatInterfaceCustom(gr.Blocks):
         self.fn = fn
         self.is_running = False
         with self:
-            chatbot = gr.Chatbot(type="messages",editable=True, height="75vh")
+            chatbot = gr.Chatbot(type="messages",editable='user', height="75vh", show_copy_button=True)
             msg = gr.Textbox(show_label=False, placeholder="Type a message...", container=False, submit_btn=True, stop_btn=False)
-            default_system = '''You are an helpful AI agent. Use the tools at your disposal to assist the user in their queries as needed. Some replies don't require any tools, only conversation. Some replies require more than one tool. Some require you to use a tool and wait for the result before continuing your answer.'''
+            default_system = '''You are an helpful AI agent. Use the tools at your disposal to assist the user in their queries as needed. Some replies don't require any tools, only conversation. Some replies require more than one tool. Some require you to use a tool and wait for the result before continuing your answer. Current time is {current_time}.'''
             with gr.Accordion("System prompt", open=False):
                 system = gr.Textbox(value=default_system, show_label=False, placeholder="Enter a system prompt or leave empty for no system prompt...", container=False)
 

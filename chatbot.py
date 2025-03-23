@@ -4,7 +4,8 @@ from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, System
 import gradio as gr
 from gradio_chatbot_UI import ChatInterfaceCustom
 
-from tools import multiply, add, current_time, random_number
+from tools import random_number, generate_image, generate_video
+from langchain_community.tools import BraveSearch
 
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict, Literal, Annotated
@@ -14,6 +15,7 @@ from langgraph.graph import add_messages
 from langgraph.prebuilt import create_react_agent
 
 import re
+from datetime import datetime
 
 from debug import chunkdebug as cc
 debug_stream = False
@@ -23,8 +25,6 @@ class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 from models import get_model, load_settings, load_api_key
-
-from langchain_community.tools import BraveSearch
 
 from debug import timer
     
@@ -156,6 +156,35 @@ def transform_for_gradio(messages_list):
                 )
             )
 
+            if content_val.startswith("Image successfully generated and displayed (ID:"):
+                # Display the image
+                img_id = content_val.split("ID:")[1].strip()[:-2]
+                img_path = f"generated_images/{img_id}.png"
+                gradio_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=gr.Image(img_path),
+                        metadata={
+                            "title": "Image result:",
+                            #"parent_id": item.get("tool_call_id", "")
+                        }
+                    )
+                )
+            if content_val.startswith("Video successfully generated and displayed (ID:"):
+                # Display the video
+                vid_id = content_val.split("ID:")[1].strip()[:-2]
+                vid_path = f"generated_videos/{vid_id}.mp4"
+                gradio_messages.append(
+                    gr.ChatMessage(
+                        role="assistant",
+                        content=gr.Video(vid_path),
+                        metadata={
+                            "title": "Video result:",
+                            #"parent_id": item.get("tool_call_id", "")
+                        }
+                    )
+                )
+
         else:
             raise ValueError(f"Unknown message type: {type(item)}")
 
@@ -228,7 +257,7 @@ def main(preset: str = "gemma"):
     settings = load_settings(preset)
     model = get_model(settings)
     search = BraveSearch.from_api_key(api_key=load_api_key("brave"), search_kwargs={"count": 3})
-    tools = [search, current_time]
+    tools = [search, generate_video, generate_image, random_number]
     agent_executor = create_react_agent(model, tools)
     agent_graph = StateGraph(State)
     agent_graph = agent_graph.add_node("main_agent", agent_executor)
@@ -238,6 +267,10 @@ def main(preset: str = "gemma"):
     def gradio_completion(history, system):
         history = gradio_history_to_langchain_history(history)
         if system:
+            system_variables = {
+                "current_time": datetime.now().strftime('%A, %B %d, %Y at %I:%M:%S %p')
+            }
+            system = system.format(**system_variables)
             history = [SystemMessage(content=system)] + history
         events = agent_executor.stream(
             {"messages": history},
