@@ -116,7 +116,7 @@ def transform_for_gradio(messages_list):
                         gr.ChatMessage(
                             role="assistant",
                             content=seg_content_stripped,
-                            metadata={"title": "Thinking..."}
+                            metadata={"title": "Thinking...", "status": "pending"},
                         )
                     )
                 else:
@@ -137,7 +137,8 @@ def transform_for_gradio(messages_list):
                                 content= tool_call['function']['arguments'],
                                 metadata={
                                     "title": f"Using tool {tool_call['function']['name']}",
-                                    "id": tool_call['id']
+                                    "id": tool_call['id'],
+                                    "status": "pending"
                                 }
                             )
                         )
@@ -151,7 +152,8 @@ def transform_for_gradio(messages_list):
                     content=content_val,
                     metadata={
                         "title": "Tool result:",
-                        "parent_id": item.tool_call_id
+                        "parent_id": item.tool_call_id,
+                        "status": "pending"
                     }
                 )
             )
@@ -185,6 +187,11 @@ def transform_for_gradio(messages_list):
 
         else:
             raise ValueError(f"Unknown message type: {type(item)}")
+        
+    if gradio_messages:
+        for message in gradio_messages[:-1]:
+            if hasattr(message, "metadata") and message.metadata.get("status") == "pending":
+                message.metadata["status"] = "done"
 
     return gradio_messages
 
