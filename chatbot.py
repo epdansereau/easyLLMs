@@ -13,6 +13,8 @@ from langgraph.types import Command
 from langgraph.graph import add_messages
 from langgraph.prebuilt import create_react_agent
 
+import re
+
 from debug import chunkdebug as cc
 debug_stream = False
 
@@ -61,82 +63,46 @@ def stream_response(events):
 
         yield current_messages
 
+def parse_thinking_segments(text):
+    """
+    Given a string that may contain <think>...</think> segments,
+    return a list of tuples (content, is_thinking), where:
+    - content is the substring
+    - is_thinking is a boolean indicating whether the substring
+        is inside <think>...</think> or not.
+
+    If <think> is unclosed, treat everything from <think> onward
+    as one thinking segment.
+    """
+    parts = re.split(r'(<think>|</think>)', text)
+    result = []
+    is_thinking = False
+    buffer = ''
+
+    for part in parts:
+        if part == '<think>':
+            if buffer:
+                result.append((buffer, is_thinking))
+                buffer = ''
+            is_thinking = True
+        elif part == '</think>':
+            if buffer:
+                result.append((buffer, is_thinking))
+                buffer = ''
+            is_thinking = False
+        else:
+            buffer += part
+
+    if buffer:
+        result.append((buffer, is_thinking))
+
+    return result
 
 def transform_for_gradio(messages_list):
-    """
-    For each item in messages_list, produce one or more gr.ChatMessage objects.
-
-    - "tool_call" --> a ChatMessage with metadata={"title": "...Using tool...", "id": ...}
-    - "tool_result" --> a ChatMessage with metadata={"title": "Tool result:", "parent_id": ...}
-    - "normal_text" --> possibly split into multiple ChatMessages:
-        * plain text (everything outside <think></think> tags)
-        * "thinking" text (everything inside <think></think>)
-          which becomes ChatMessage with metadata={"title": "Thinking..."}
-        If <think> is missing a closing </think>, we consider the remainder
-        of the string after <think> to be a "thinking" segment.
-    - Any other "type" --> treat as normal text.
-    """
-
-    def parse_thinking_segments(text):
-        """
-        Given a string that may contain <think>...</think> segments,
-        return a list of tuples (content, is_thinking), where:
-          - content is the substring
-          - is_thinking is a boolean indicating whether the substring
-            is inside <think>...</think> or not.
-
-        If <think> is unclosed, treat everything from <think> onward
-        as one thinking segment.
-        """
-        segments = []
-        pointer = 0
-        length = len(text)
-
-        while pointer < length:
-            # Find the next <think> tag
-            start_idx = text.find("<think>", pointer)
-            if start_idx == -1:
-                # No more <think> tags; everything left is normal text
-                normal_part = text[pointer:]
-                if normal_part:
-                    segments.append((normal_part, False))
-                break
-
-            # Everything up to <think> is normal text
-            if start_idx > pointer:
-                normal_part = text[pointer:start_idx]
-                segments.append((normal_part, False))
-
-            # Now find the corresponding </think> (if any)
-            close_tag = "</think>"
-            end_idx = text.find(close_tag, start_idx + len("<think>"))
-            if end_idx == -1:
-                # No closing </think>, so everything from <think> to the end
-                # is considered "thinking"
-                thinking_part = text[start_idx + len("<think>"):]
-                segments.append((thinking_part, True))
-                # We're done parsing this string
-                break
-            else:
-                # We found a matching </think>
-                thinking_part = text[start_idx + len("<think>"): end_idx]
-                segments.append((thinking_part, True))
-                # Move pointer past the </think>
-                pointer = end_idx + len(close_tag)
-                continue
-
-            # If we didn't break, update pointer
-            pointer = end_idx + len(close_tag)
-
-        return segments
-
     gradio_messages = []
 
     for item in messages_list:
-        if isinstance(item, SystemMessage):
-            continue
-
-        elif isinstance(item, AIMessage):
+        if isinstance(item, AIMessage):
             original_content = item.content
             # Parse out <think> segments
             parsed_segments = parse_thinking_segments(original_content)
@@ -190,11 +156,6 @@ def transform_for_gradio(messages_list):
                 )
             )
 
-        elif isinstance(item, HumanMessage):
-            # If there's some other type not handled, treat it as normal text
-            gradio_messages.append(
-                gr.ChatMessage(role="user", content=item.content)
-            )
         else:
             raise ValueError(f"Unknown message type: {type(item)}")
 
