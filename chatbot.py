@@ -13,6 +13,9 @@ from langgraph.types import Command
 from langgraph.graph import add_messages
 from langgraph.prebuilt import create_react_agent
 
+from debug import chunkdebug as cc
+debug_stream = False
+
 class State(TypedDict):
     email_input: dict
     messages: Annotated[list, add_messages]
@@ -24,91 +27,39 @@ from langchain_community.tools import BraveSearch
 from debug import timer
     
 def stream_response(events):
-    # This list holds all items so far
-    result_list = []
+    if debug_stream:
+        cc.init()
 
-    # Track the current tool call being assembled
-    current_tool_id = None
-    partial_call_args = ""
-    partial_call_name = None
+    current_conversation = []
+    partial_message_content = ""
 
-    def finalize_tool_call():
-        """
-        Append the accumulated tool-call JSON for current_tool_id, if any,
-        and reset the accumulation buffers.
-        """
-        nonlocal current_tool_id, partial_call_args, partial_call_name, result_list
-        if current_tool_id is not None:
-            result_list.append({
-                "type": "tool_call",
-                "tool_call_id": current_tool_id,
-                "name": partial_call_name or "",
-                "content": partial_call_args
-            })
-            current_tool_id = None
-            partial_call_args = ""
-            partial_call_name = None
-    for message_chunk, metadata in events:
-        # Check if this is a tool-result message
-        if getattr(message_chunk, "name", None) and hasattr(message_chunk, "tool_call_id"):
-            # Before storing a tool result, finalize any in-progress tool call
-            finalize_tool_call()
 
-            # Store the tool's result
-            tool_call_id = message_chunk.tool_call_id
-            tool_output = message_chunk.content
-            result_list.append({
-                "type": "tool_result",
-                "tool_call_id": tool_call_id,
-                "content": tool_output
-            })
-
-        else:
-            # Handle any partial tool-call arguments
-            calls = message_chunk.additional_kwargs.get("tool_calls", [])
-            for c in calls:
-                if c.get("type") == "function":
-                    call_id = c.get("id")
-                    function_data = c.get("function", {})
-                    function_name = function_data.get("name", "")
-                    args_piece = function_data.get("arguments", "")
-
-                    # If we see a new call ID, finalize the old one
-                    # and start a new accumulation
-                    if call_id is not None and call_id != current_tool_id:
-                        finalize_tool_call()
-                        current_tool_id = call_id
-                        partial_call_args = args_piece
-                        partial_call_name = function_name
-                    else:
-                        # Same call ID -> keep appending to the last known call
-                        partial_call_args += args_piece
-                        # If a function name was provided in this snippet, store/update it.
-                        # Typically, it's the same name across partial chunks, but we'll store anyway:
-                        if function_name:
-                            partial_call_name = function_name
-
-            # If there's normal text in this chunk, we add/append it
-            if message_chunk.content:
-                # Check if the last item in the list is also normal_text
-                if result_list and result_list[-1]["type"] == "normal_text":
-                    # Append to the previous normal_text
-                    result_list[-1]["content"] += message_chunk.content
+    for stream_mode, chunk in events:
+        if debug_stream:
+            cc(stream_mode)
+            cc(chunk)
+        if stream_mode == "updates":
+            for key in chunk:
+                if key == "agent" or key == "tools":
+                    for message in chunk[key]["messages"]:
+                        current_conversation.append(message)
+                        partial_message_content = ""
                 else:
-                    # Create a new normal_text entry
-                    result_list.append({
-                        "type": "normal_text",
-                        "content": message_chunk.content
-                    })
+                    raise ValueError(f"Unknown key in updates: {key}")
 
-        # After processing this chunk, yield the entire list so far
-        yield result_list
+            partial_message_content = ""
+        elif stream_mode == "messages":
+            message_chunk, metadata = chunk
+            if message_chunk.content:
+                partial_message_content += message_chunk.content
+        else:
+            pass
+        current_messages = current_conversation if not partial_message_content else current_conversation + [AIMessage(content=partial_message_content)]
 
-    # After all chunks, finalize any leftover tool-call
-    finalize_tool_call()
+        if debug_stream:
+            cc(current_messages)
 
-    # Yield the final state of the list once more
-    yield result_list
+        yield current_messages
 
 
 def transform_for_gradio(messages_list):
@@ -182,10 +133,11 @@ def transform_for_gradio(messages_list):
     gradio_messages = []
 
     for item in messages_list:
-        msg_type = item.get("type")
+        if isinstance(item, SystemMessage):
+            continue
 
-        if msg_type == "normal_text":
-            original_content = item.get("content", "")
+        elif isinstance(item, AIMessage):
+            original_content = item.content
             # Parse out <think> segments
             parsed_segments = parse_thinking_segments(original_content)
             # For each segment, create an appropriate ChatMessage
@@ -209,39 +161,42 @@ def transform_for_gradio(messages_list):
                             content=seg_content_stripped
                         )
                     )
+            if hasattr(item, "additional_kwargs"):
+                if item.additional_kwargs is not None:
+                    tool_calls = item.additional_kwargs.get("tool_calls", [])
+                    for tool_call in tool_calls:
+                        gradio_messages.append(
+                            gr.ChatMessage(
+                                role="assistant",
+                                content= tool_call['function']['arguments'],
+                                metadata={
+                                    "title": f"Using tool {tool_call['function']['name']}",
+                                    "id": tool_call['id']
+                                }
+                            )
+                        )
 
-        elif msg_type == "tool_call":
-            # Use the tool name in the metadata's title
-            gradio_messages.append(
-                gr.ChatMessage(
-                    role="assistant",
-                    content=item.get("content", ""),  # e.g. JSON snippet
-                    metadata={
-                        "title": f"Using tool {item.get('name', '')}",
-                        "id": item.get("tool_call_id", "")
-                    }
-                )
-            )
-
-        elif msg_type == "tool_result":
+        elif isinstance(item, ToolMessage):
             # Just store the content as-is
-            content_val = item.get("content", "")
+            content_val = item.content
             gradio_messages.append(
                 gr.ChatMessage(
                     role="assistant",
                     content=content_val,
                     metadata={
                         "title": "Tool result:",
-                        "parent_id": item.get("tool_call_id", "")
+                        "parent_id": item.tool_call_id
                     }
                 )
             )
 
-        else:
+        elif isinstance(item, HumanMessage):
             # If there's some other type not handled, treat it as normal text
             gradio_messages.append(
-                gr.ChatMessage(role="assistant", content=item.get("content", ""))
+                gr.ChatMessage(role="user", content=item.content)
             )
+        else:
+            raise ValueError(f"Unknown message type: {type(item)}")
 
     return gradio_messages
 
@@ -308,7 +263,7 @@ def gradio_history_to_langchain_history(gradio_history):
 
     return lc_messages
 
-def main(preset: str = "qwen"):
+def main(preset: str = "gemma"):
     settings = load_settings(preset)
     model = get_model(settings)
     search = BraveSearch.from_api_key(api_key=load_api_key("brave"), search_kwargs={"count": 3})
@@ -325,7 +280,7 @@ def main(preset: str = "qwen"):
             history = [SystemMessage(content=system)] + history
         events = agent_executor.stream(
             {"messages": history},
-            stream_mode="messages",
+            stream_mode=["updates", "messages"],
         )
         for output in stream_response(events):
             yield transform_for_gradio(output)
