@@ -27,6 +27,8 @@ class State(TypedDict):
 from models import get_model, load_settings, load_api_key
 
 from debug import timer
+
+THOUGHTS_IN_HISTORY = False
     
 def stream_response(events):
     if debug_stream:
@@ -200,6 +202,7 @@ def gradio_history_to_langchain_history(gradio_history):
     lc_messages = []
 
     for entry in gradio_history:
+        print(entry)
         role = entry.get("role")
         content = entry.get("content", "")
         metadata = entry.get("metadata") or {}
@@ -250,7 +253,13 @@ def gradio_history_to_langchain_history(gradio_history):
                 )
             )
 
+        if title == "Image result:" or title == "Video result:":
+            continue
+
         else:
+            if not THOUGHTS_IN_HISTORY:
+                if title == "Thinking...":
+                    continue
             # Otherwise, it's a plain assistant message
             lc_messages.append(
                 AIMessage(content=content)
